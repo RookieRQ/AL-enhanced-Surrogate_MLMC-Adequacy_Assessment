@@ -1,3 +1,19 @@
+"""
+Surrogate model
+@author: Ensieh Sharifnia
+Delft University of Technology
+e.sharifnia@tudelft.nl
+
+Function optimal_n_store_generator() by Michael Evans, Imperial College London.
+
+This code implements training surrogate model in 
+"Multilevel Monte Carlo with Surrogate Models forResource Adequacy Assessment",
+Ensieh Sharifnia and Simon Tindemans,
+accepted for publication at PMAPS 2022.
+A preprint is available at: arXiv:2203.03437
+
+If you use (parts of) this code, please cite the preprint or published paper.
+"""
 import os
 import numpy as np
 from sklearn import svm

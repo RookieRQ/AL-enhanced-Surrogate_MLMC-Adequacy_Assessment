@@ -1,12 +1,15 @@
-# MLMC-PSCC2020
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.3757332.svg)](https://doi.org/10.5281/zenodo.3757332)
+# MLMC-PMAPS2022
 
-[![Open in Code Ocean](https://codeocean.com/codeocean-assets/badge/open-in-code-ocean.svg)](https://codeocean.com/capsule/1980903/tree)
+This code accompanies the paper *Multilevel Monte Carlo with Surrogate Models for Resource Adequacy Assessment* by
+Ensieh Sharifnia and Simon Tindemans, accepted for publication at PMAPS 2022.
 
-This code accompanies the paper *Accelerating System Adequacy Assessment using the Multilevel Monte Carlo Approach* by
-Simon Tindemans and Goran Strbac, accepted for publication at PSCC 2020 and a special issue of EPSR.
-
-A preprint is available at: https://arxiv.org/abs/1910.13013. If you use (parts of) this code, please cite the preprint or published paper.
+A preprint is available at: https://arxiv.org/abs/2203.03437. If you use (parts of) this code, please cite the preprint or published paper.
 
 ## Dependencies
 Two non-standard Python packages are required to run the code: `quadprog` and `gen_adequacy`.
+List of all dependencies are avialable in the `requirement.txt`.
+
+## Quick start
+Run `Results-for-PMAPS2022-paper.ipynb` to reproduce paper's result
+
+

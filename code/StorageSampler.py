@@ -5,13 +5,15 @@ MLMC storage dispatch case study
 Delft University of Technology
 s.h.tindemans@tudelft.nl
 
+Functions AI_n_store_generator() and run_greedy_AI() by Ensieh Sharifnia, TU Delft
 Function optimal_n_store_generator() by Michael Evans, Imperial College London.
 
-This code implements the composite system adequacy case study in the paper
-"Accelerating System Adequacy Assessment using the Multilevel Monte Carlo Approach",
-Simon Tindemans and Goran Strbac,
-accepted for publication at PSCC 2020 and s special issue of EPSR.
-A preprint is available at: arXiv:1910.13013
+
+This code implements the case study in the paper
+"Multilevel Monte Carlo with Surrogate Models for Resource Adequacy Assessment",
+Ensieh Sharifnia and Simon Tindemans,
+accepted for publication at PMAPS 2022.
+A preprint is available at: arXiv:2203.03437
 
 If you use (parts of) this code, please cite the preprint or published paper.
 """
@@ -25,6 +27,9 @@ import quadprog
 import gen_adequacy
 
 import MLSampleBase
+# import base class for machine learning algorithm
+import MachineLearning
+
 
 EFFECTIVE_ZERO = 1e-10
 
@@ -60,7 +65,7 @@ class StorageSystem(MLSampleBase.MLSampleFactory):
     """
 
     def __init__(self, demand_samples, wind_samples,
-                 store_power_list=None, store_energy_list=None, store_efficiency=1.0):
+                 store_power_list=None, store_energy_list=None, store_efficiency=1.0, train_size=500):
         """
         Initialise storage system
 
@@ -78,10 +83,10 @@ class StorageSystem(MLSampleBase.MLSampleFactory):
         super(self.__class__, self).__init__(
             output_labels=('LOLE', 'EENS'),
             output_units=('h', 'MWh'),
-            available_levels=('OptimalNStore', 'GreedyNStore', 'Greedy1Store', 'AvgStore', 'NoStore'),
-            suggested_hierarchy=('GreedyNStore','Greedy1Store','AvgStore'),
+            available_levels=('OptimalNStore', 'GreedyNStore', 'AIGreedyNStore', 'Greedy1Store', 'AvgStore', 'NoStore', 'AIModel'),
+            suggested_hierarchy=('OptimalNStore', 'AIGreedyNStore', 'AIModel', 'AvgStore'),
             permissible_level_sets=[
-                {'OptimalNStore', 'GreedyNStore', 'Greedy1Store', 'AvgStore', 'NoStore'},
+                {'OptimalNStore', 'GreedyNStore', 'AIGreedyNStore', 'Greedy1Store', 'AvgStore', 'NoStore', 'AIModel'},
                 ]
         )
 
@@ -128,7 +133,10 @@ class StorageSystem(MLSampleBase.MLSampleFactory):
                                                                  energy_limit=np.sum(self.store_energy_list))
         daily_storage_demand_offset = mean_daily_demand_with_storage - mean_daily_demand
         self.avg_storage_demand_offset_trace = np.tile(daily_storage_demand_offset, 365)
+        # AI model
+        self.AI_model = MachineLearning.MachineLearning(train_size= train_size, use_real_lol=True)
 
+        
         return
 
     def generate_sample(self, level_set):
@@ -149,12 +157,16 @@ class StorageSystem(MLSampleBase.MLSampleFactory):
             raise NotImplementedError
         if level == 'GreedyNStore':
             raise NotImplementedError
+        elif level == 'AIGreedyNStore':
+            raise NotImplementedError
         elif level == 'Greedy1Store':
             raise NotImplementedError
         elif level == 'AvgStore':
             return self._expectation_avg()
         elif level == 'NoStore':
             return self._expectation_no_store()
+        elif level == 'AIModel':
+            raise NotImplementedError
         else:
             raise NotImplementedError
 
@@ -166,7 +178,9 @@ class StorageSystem(MLSampleBase.MLSampleFactory):
         """
         if level == 'OptimalNStore':
             return False
-        if level == 'GreedyNStore':
+        elif level == 'GreedyNStore':
+            return False
+        elif level == 'AIGreedyNStore':
             return False
         elif level == 'Greedy1Store':
             return False
@@ -174,6 +188,8 @@ class StorageSystem(MLSampleBase.MLSampleFactory):
             return True
         elif level == 'NoStore':
             return True
+        elif level == 'AIModel':
+            return False
         else:
             raise NotImplementedError
 
@@ -251,8 +267,171 @@ class StorageSystem(MLSampleBase.MLSampleFactory):
 
         return load_vec + power_solution
 
+    def generate_margin_trace(self):
 
+        # select a random demand year and its corresponding demand trace
+        demand_trace = self.demand_samples[np.random.choice(list(self.demand_samples))]
+        # select a random wind trace
+        wind_trace = self.wind_samples[np.random.choice(list(self.wind_samples))]
+        # generate a random thermal generation trace
+        thermal_gen_trace = self.rv_system.generation_trace(num_steps=8760)
+        # compute the resulting margin trace
+        return thermal_gen_trace + wind_trace - demand_trace
 
+    def greedy_storage_dispatch(self, pre_margin, power_limit, energy_limit, dt=1):
+        """
+        Execute greedy storage algorithm on a net margin time trace
+
+        :param pre_margin: margin time series without storage
+        :param power_limit: max power (charge and discharge assumed identical)
+        :param energy_limit: max energy storage
+        :param dt: time step (units of energy/power)
+        :return: adjusted margin time series
+        """
+        assert power_limit > 0
+        assert energy_limit > 0
+
+        # assume start with a full store
+        energy_stored = energy_limit
+
+        post_margin = np.zeros(pre_margin.size)
+        for t, margin in enumerate(pre_margin):
+            store_power = max(min(margin, power_limit, (energy_limit - energy_stored) / dt), -power_limit,
+                              -energy_stored / dt)
+            energy_stored += store_power
+            post_margin[t] = margin - store_power
+
+        return post_margin
+    def run_greedy_policy(self, margin_trace):
+        '''
+        Compute (LOL, ENS) for sample in the Gre model
+        Parameters: 
+            margin_trace: array
+        Return:
+            (LOL, ENS) array           
+        '''
+        # generate a list of units and sort them by time to go
+        store_list = [item for item in zip(self.store_power_list, self.store_energy_list)]
+        store_list.sort(key=lambda x: x[1]/x[0], reverse=True)
+        for unit_power, unit_energy in store_list:
+            margin_trace = self.greedy_storage_dispatch(pre_margin=margin_trace,
+                                                                    power_limit=unit_power,
+                                                                    energy_limit=unit_energy)
+       
+        shortfalls = margin_trace < 0
+        lol = np.sum(shortfalls)
+        ue = -np.sum(margin_trace[shortfalls])
+        return np.array([lol, ue])
+
+    def run_greedy_AI(self, margin_trace):
+        '''
+        Compute (LOL, ENS) for sample in the HGB+Gre model
+        Parameters: 
+            margin_trace: array
+        Return:
+            (LOL, ENS) array
+        Implemented by Ensieh Sharifnia, TU Delft           
+        '''
+        margin_trace = np.reshape(margin_trace, (-1,24))
+        lol_estimate = self.AI_model.predict(margin_trace, target=1)[0].astype(int)
+        margin_trace = margin_trace[lol_estimate>EFFECTIVE_ZERO]
+        margin_trace= margin_trace.ravel()
+        return self.run_greedy_policy(margin_trace)
+
+    def run_optimal_policy(self, margin_trace):
+        """
+        Compute (LOL, ENS) for sample in the Exact model
+        :return: (LOL, ENS) array
+
+        Implemented by Michael Evans, Imperial College London. Refactored by Simon Tindemans, TU Delft.
+        """
+
+        def _optimal_discharge_policy_step(shortfall, state, power_limit, dt):
+            """
+            Greedy optimal dispatch policy for n devices; for a single time step.
+
+            :param shortfall: current shortfall without storage
+            :param initial_state: duration state vector across stores
+            :param power_limit: max power vector across stores
+            :param dt: time step (units of energy/power)
+            :return: optimal dispatch
+            """
+            n = len(state)
+            one = np.ones([n, 1])  # unity vector (length n)
+            zero = np.zeros([n, 1])  # zero vector (length n)
+            y = np.unique(np.sort(np.concatenate([state, np.max([state - dt * one, zero], axis=0)], axis=0)))
+            y = y[::-1]  # decreasing order
+            E_u = 0
+            i = -1  # to allow for 0-indexing
+            while True:
+                i += 1
+                E_l = E_u
+                E_u = np.sum(
+                    np.multiply(power_limit,
+                                np.max([np.min([state - y[i] * one, dt * one], axis=0), zero], axis=0)))
+                if E_u >= shortfall * dt or i == len(y) - 1:
+                    break
+            if E_u <= shortfall * dt:
+                z_hat = y[i]
+            else:
+                z_hat = y[i - 1] + (shortfall * dt - E_l) * (y[i] - y[i - 1]) / (E_u - E_l)
+            u = np.multiply(power_limit, np.max([np.min([(state - z_hat * one) / dt, one], axis=0), zero], axis=0))
+            return u
+
+        def _recharge_policy_step(excess, state, duration_limit, power_limit_up, power_limit_down, eta, dt):
+            """
+            Greedy recharge policy for n devices; for a single time step.
+
+            :param excess: current excess without storage
+            :param initial_state: duration state vector across stores
+            :param duration_limit: maximum duration limit across stores
+            :param power_limit: max power vector across stores
+            :param dt: time step (units of energy/power)
+            :return: recharge dispatch
+            """
+            n = len(state)
+            one = np.ones([n, 1])  # unity vector (length n)
+            zero = np.zeros([n, 1])  # zero vector (length n)
+            z_bar = np.min([state - eta * power_limit_up * dt / power_limit_down, duration_limit], axis=0)
+            y = np.unique(np.sort(np.concatenate([state, z_bar], axis=0), axis=0))  # ascending order
+            E_u = 0
+            i = -1  # to allow for 0-indexing
+            while True:
+                i += 1
+                E_l = E_u
+                E_u = np.sum(np.multiply(power_limit_down,
+                                         np.max(
+                                             [np.min([y[i] * one - state, z_bar - state, dt * one], axis=0), zero],
+                                             axis=0)))
+                if E_u >= excess * dt or i == len(y) - 1:
+                    break
+            if E_u <= excess * dt:
+                z_hat = y[i]
+            else:
+                z_hat = y[i - 1] + (excess * dt - E_l) * (y[i] - y[i - 1]) / (E_u - E_l)
+            u = np.multiply(power_limit_down,
+                            np.min([np.max([(state - z_hat * one) / dt, (state - z_bar) / dt], axis=0), zero],
+                                   axis=0)) / eta
+            return u
+
+        lol = 0
+        eu = 0.0
+        energy_limits = np.array([self.store_energy_list]).transpose()
+        power_limits = np.array([self.store_power_list]).transpose()
+        state = energy_limits / power_limits  # assume batteries start full
+        for ts in range(0, len(margin_trace)):
+            if margin_trace[ts] <= 0:
+                control_input = _optimal_discharge_policy_step(-margin_trace[ts], state, power_limits, dt=1)
+                ens = -margin_trace[ts] - np.sum(control_input)
+                lol += (ens > EFFECTIVE_ZERO)
+                eu += ens
+            else:
+                control_input = _recharge_policy_step(margin_trace[ts], state, energy_limits / power_limits,
+                                                      -power_limits, power_limits,
+                                                      eta=1, dt=1)
+            state = state - control_input / power_limits
+        return np.array([lol, eu])
+    
 class StorageSample(MLSampleBase.MLSample):
     """
     Class for a single sample (i.e. realisation) of annual loss of load.
@@ -268,18 +447,8 @@ class StorageSample(MLSampleBase.MLSample):
         """
         # Required function: formally initialise sample by instantiating random realisation.
         super(self.__class__, self).__init__(level_set=level_set)
-
         self.system = power_system
-
-        # select a random demand year and its corresponding demand trace
-        demand_trace = self.system.demand_samples[np.random.choice(list(power_system.demand_samples))]
-        # select a random wind trace
-        wind_trace = self.system.wind_samples[np.random.choice(list(power_system.wind_samples))]
-        # generate a random thermal generation trace
-        thermal_gen_trace = self.system.rv_system.generation_trace(num_steps=8760)
-        # compute the resulting margin trace
-        self.margin_trace = thermal_gen_trace + wind_trace - demand_trace
-
+        self.margin_trace = self.system.generate_margin_trace()
 
         return
 
@@ -293,14 +462,18 @@ class StorageSample(MLSampleBase.MLSample):
 
         if level == 'OptimalNStore':
             return self.optimal_n_store_generator()
-        if level == 'GreedyNStore':
+        elif level == 'GreedyNStore':
             return self.greedy_n_store_generator()
+        elif level == 'AIGreedyNStore':
+            return self.greedy_AI_generator()
         elif level == 'Greedy1Store':
             return self.greedy_1_store_generator()
         elif level == 'AvgStore':
             return self.avg_store_generator()
         elif level == 'NoStore':
             return self.no_store_generator()
+        elif level == 'AIModel':
+            return self.AI_n_store_generator()
         else:
             raise RuntimeError()
 
@@ -328,8 +501,6 @@ class StorageSample(MLSampleBase.MLSample):
         ue = -np.sum(adjusted_margin_trace[shortfalls])
         return np.array([lol, ue])
 
-
-
     def greedy_1_store_generator(self):
         """
         Compute (LOL, ENS) for sample in the Greedy1Store model
@@ -340,166 +511,62 @@ class StorageSample(MLSampleBase.MLSample):
             return np.array([0., 0.])
 
         # apply greedy storage to margin trace
-        post_margin_trace = self._greedy_storage(pre_margin=self.margin_trace,
-                                                 power_limit=np.sum(self.system.store_power_list),
-                                                 energy_limit=np.sum(self.system.store_energy_list))
+        post_margin_trace = self.system.greedy_storage_dispatch(pre_margin=self.margin_trace,
+                                                                 power_limit=np.sum(self.system.store_power_list),
+                                                                 energy_limit=np.sum(self.system.store_energy_list))
 
         shortfalls = post_margin_trace < 0
         lol = np.sum(shortfalls)
         ue = -np.sum(post_margin_trace[shortfalls])
         return np.array([lol, ue])
 
+
     def greedy_n_store_generator(self):
         """
         Compute (LOL, ENS) for sample in the GreedyNStore model
         :return: (LOL, ENS) array
         """
-
-        # efficiency measure: evaluate NoStore policy. If it results in no impacts, skip further evaluation
         if (self['NoStore'] < EFFECTIVE_ZERO).all():
             return np.array([0., 0.])
+        return self.system.run_greedy_policy(self.margin_trace)
+    def greedy_AI_generator(self):
+        """
+        Compute (LOL, ENS) for sample in the GreedyNStore model
+        :return: (LOL, ENS) array
+        """
+        if (self['NoStore'] < EFFECTIVE_ZERO).all():
+            return np.array([0., 0.])
+        return self.system.run_greedy_AI(self.margin_trace)
 
-        # apply greedy storage units to margin trace, one by one
-        updated_margin_trace = self.margin_trace
-
-        # generate a list of units and sort them by time to go
-        store_list = [item for item in zip(self.system.store_power_list, self.system.store_energy_list)]
-        store_list.sort(key=lambda x: x[1]/x[0], reverse=True)
-
-        for unit_power, unit_energy in store_list:
-            updated_margin_trace = self._greedy_storage(pre_margin=updated_margin_trace,
-                                                        power_limit=unit_power,
-                                                        energy_limit=unit_energy)
-
-        shortfalls = updated_margin_trace < 0
-        lol = np.sum(shortfalls)
-        ue = -np.sum(updated_margin_trace[shortfalls])
-        return np.array([lol, ue])
-
+        
 
     def optimal_n_store_generator(self):
         """
         Compute (LOL, ENS) for sample in the OptimalNStore model
         :return: (LOL, ENS) array
 
-        Implemented by Michael Evans, Imperial College London.
+        Implemented by Michael Evans, Imperial College London. Refactored by Simon Tindemans, TU Delft.
         """
 
-        def optimal_policy(shortfall, state, power_limit, dt):
-            """
-            Greedy optimal dispatch policy for n devices; for a single time step.
+        return self.system.run_optimal_policy(self.margin_trace)
 
-            :param shortfall: current shortfall without storage
-            :param initial_state: duration state vector across stores
-            :param power_limit: max power vector across stores
-            :param dt: time step (units of energy/power)
-            :return: optimal dispatch
-            """
-            n = len(state)
-            one = np.ones([n, 1])  # unity vector (length n)
-            zero = np.zeros([n, 1])  # zero vector (length n)
-            y = np.unique(np.sort(np.concatenate([state, np.max([state - dt * one, zero], axis=0)], axis=0)))
-            y = y[::-1]  # decreasing order
-            E_u = 0
-            i = -1  # to allow for 0-indexing
-            while True:
-                i += 1
-                E_l = E_u
-                E_u = np.sum(
-                    np.multiply(power_limit, np.max([np.min([state - y[i] * one, dt * one], axis=0), zero], axis=0)))
-                if E_u >= shortfall * dt or i == len(y) - 1:
-                    break
-            if E_u <= shortfall * dt:
-                z_hat = y[i]
-            else:
-                z_hat = y[i - 1] + (shortfall * dt - E_l) * (y[i] - y[i - 1]) / (E_u - E_l)
-            u = np.multiply(power_limit, np.max([np.min([(state - z_hat * one) / dt, one], axis=0), zero], axis=0))
-            return u
-
-        def recharge(excess, state, duration_limit, power_limit_up, power_limit_down, eta, dt):
-            """
-            Greedy recharge policy for n devices; for a single time step.
-
-            :param excess: current excess without storage
-            :param initial_state: duration state vector across stores
-            :param duration_limit: maximum duration limit across stores
-            :param power_limit: max power vector across stores
-            :param dt: time step (units of energy/power)
-            :return: recharge dispatch
-            """
-            n = len(state)
-            one = np.ones([n, 1])  # unity vector (length n)
-            zero = np.zeros([n, 1])  # zero vector (length n)
-            z_bar = np.min([state - eta * power_limit_up * dt / power_limit_down, duration_limit], axis=0)
-            y = np.unique(np.sort(np.concatenate([state, z_bar], axis=0), axis=0))  # ascending order
-            E_u = 0
-            i = -1  # to allow for 0-indexing
-            while True:
-                i += 1
-                E_l = E_u
-                E_u = np.sum(np.multiply(power_limit_down,
-                                         np.max([np.min([y[i] * one - state, z_bar - state, dt * one], axis=0), zero],
-                                                axis=0)))
-                if E_u >= excess * dt or i == len(y) - 1:
-                    break
-            if E_u <= excess * dt:
-                z_hat = y[i]
-            else:
-                z_hat = y[i - 1] + (excess * dt - E_l) * (y[i] - y[i - 1]) / (E_u - E_l)
-            u = np.multiply(power_limit_down,
-                            np.min([np.max([(state - z_hat * one) / dt, (state - z_bar) / dt], axis=0), zero],
-                                   axis=0)) / eta
-            return u
-
-        lol=0
-        eu=0.0
-        energy_limits=np.array([self.system.store_energy_list]).transpose()
-        power_limits=np.array([self.system.store_power_list]).transpose()
-        state = energy_limits/power_limits # assume batteries start full
-        # self.E_mat=np.zeros([1,8761])
-        # self.E_mat[0,[0]]=np.sum(energy_limits)
-        # self.u_mat=np.zeros([1,8760])
-        # self.x_mat=np.zeros([27,8761])
-        # self.x_mat[:,[0]]=state
-        for ts in range(0,len(self.margin_trace)):
-            if self.margin_trace[ts]<=0:
-                control_input=optimal_policy(-self.margin_trace[ts],state,power_limits,dt=1)
-                ens=-self.margin_trace[ts]-np.sum(control_input)
-                lol+=(ens>EFFECTIVE_ZERO)
-                eu+=ens
-            else:
-                control_input=recharge(self.margin_trace[ts],state,energy_limits/power_limits,-power_limits,power_limits,
-                                       eta=1, dt=1)
-            state=state-control_input/power_limits
-            # self.x_mat[:,[ts+1]]=state
-            # self.E_mat[0,[ts+1]]=np.sum(state*power_limits)
-            # self.u_mat[0,[ts]]=np.sum(control_input)
-        return np.array([lol,eu])
-
-    def _greedy_storage(self, pre_margin, power_limit, energy_limit, dt=1):
+    def AI_n_store_generator(self):
         """
-        Execute greedy storage algorithm on a net margin time trace
-
-        :param pre_margin: margin time series without storage
-        :param power_limit: max power (charge and discharge assumed identical)
-        :param energy_limit: max energy storage
-        :param dt: time step (units of energy/power)
-        :return: adjusted margin time series
+        Compute (LOL, ENS) for sample in the surrogate model
+        :return: (LOL, ENS) array
+        Implemented by Ensieh Sharifnia, TU Delft
         """
-        assert power_limit > 0
-        assert energy_limit > 0
+        daily_margin_traces = np.reshape(self.margin_trace, (-1,24))
+        daily_margin_traces = daily_margin_traces[~np.all(daily_margin_traces>=0, axis=1),:]
+        if (daily_margin_traces.size > 0):
+            lol, ens = self.system.AI_model.predict(daily_margin_traces, target=2)
+            return np.array([np.sum(lol), np.sum(ens)]) 
+        else:
+            return np.array([0., 0.])
+        
+         
 
-        # assume start with a full store
-        energy_stored = energy_limit
 
-        post_margin = np.zeros(pre_margin.size)
-        for t, margin in enumerate(pre_margin):
-            store_power = max(min(margin, power_limit, (energy_limit - energy_stored) / dt), -power_limit,
-                              -energy_stored / dt)
-            energy_stored += store_power
-            post_margin[t] = margin - store_power
-
-        return post_margin
 
 
 if __name__ == "__main__":

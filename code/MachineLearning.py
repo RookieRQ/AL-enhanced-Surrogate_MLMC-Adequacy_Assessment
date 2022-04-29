@@ -62,8 +62,8 @@ class MachineLearning:
         '''
         import time
         start_time = time.time()
-        X_train = self.load_data(os.getcwd()+"/data/AIdata/daily_margin.csv")
-        lol_train = self.load_data(os.getcwd()+"/data/AIdata/lol.csv")
+        X_train = self.load_data("../data/AIdata/daily_margin.csv")
+        lol_train = self.load_data("../data/AIdata/lol.csv")
         if train_size<=1:
             train_size = X_train.shape[0]*train_size
         lol_index = np.random.choice( X_train.shape[0],train_size, replace=False)
@@ -82,7 +82,7 @@ class MachineLearning:
             y_hat = np.rint(lol_model.predict(X_train))
             ens_index = y_hat>0
         X_train[X_train>1] = 1
-        ens_train = self.load_data(os.getcwd()+"/data/AIdata/ens.csv")[lol_index]
+        ens_train = self.load_data("../data/AIdata/ens.csv")[lol_index]
         ens_train = ens_train[ens_index]
         X_train = X_train[ens_index,:]
         X_train, scaler = self.scale_data(X_train)
@@ -143,9 +143,9 @@ if __name__ == "__main__":
     st = [500,1000,5000]
     for train_size in st:
         ML = MachineLearning(train_size= train_size, use_real_lol=True)
-        X_test = ML.load_data(os.getcwd()+"/data/AIdata/daily_margin_test.csv")
-        ens_test = ML.load_data(os.getcwd()+"/data/AIdata/ens_test.csv")
-        lol_test = ML.load_data(os.getcwd()+"/data/AIdata/lol_test.csv")
+        X_test = ML.load_data("../data/AIdata/daily_margin_test.csv")
+        ens_test = ML.load_data("../data/AIdata/ens_test.csv")
+        lol_test = ML.load_data("../data/AIdata/lol_test.csv")
         lol_hat, ens_hat = ML.predict(X_test)
         print(f"root_mean_squared_error(LOL) : {mean_squared_error( lol_test, lol_hat, squared=False):.4f}")
         print(f"root_mean_squared_error(ENS) : {mean_squared_error( ens_test, ens_hat, squared=False):.4f}")

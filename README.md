@@ -1,15 +1,6 @@
-# MLMC-PMAPS2022
+# AL-enhanced-Surrogate_MLMC-Adequacy_Assessment
 
-This code accompanies the paper *Multilevel Monte Carlo with Surrogate Models for Resource Adequacy Assessment* by
-Ensieh Sharifnia and Simon Tindemans, accepted for publication at PMAPS 2022.
+This code accompanies the paper *MLMC-based Adequacy Assessment with Active Learning trained Surrogate Models* by
+Ruiqi Zhang and Simon Tindemans, submitted at ISGT Europe 2025. The source code is built on the top of Paper: **Multilevel monte carlo with surrogate models for resource adequacy assessment**.
 
-A preprint is available at: https://arxiv.org/abs/2203.03437. If you use (parts of) this code, please cite the preprint or published paper.
-
-## Dependencies
-Two non-standard Python packages are required to run the code: `quadprog` and `gen_adequacy`.
-List of all dependencies are avialable in the `requirement.txt`.
-
-## Quick start
-Run `Results-for-PMAPS2022-paper.ipynb` to reproduce paper's result
-
-
+The source code will be released after the paper is accepted.

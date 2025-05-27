@@ -139,6 +139,7 @@ class StorageSystem(MLSampleBase.MLSampleFactory):
         
         return
 
+
     def generate_sample(self, level_set):
         """
         Implement base class function to generate sample objects
@@ -146,6 +147,7 @@ class StorageSystem(MLSampleBase.MLSampleFactory):
         :return: StorageSample object (derived from MLSample)
         """
         return StorageSample(level_set=level_set, power_system=self)
+
 
     def expectation_value(self, level):
         """
@@ -170,6 +172,7 @@ class StorageSystem(MLSampleBase.MLSampleFactory):
         else:
             raise NotImplementedError
 
+
     def expectation_value_available(self, level):
         """
         Implement base class function that specifies whether analytical expectation values are available
@@ -193,6 +196,7 @@ class StorageSystem(MLSampleBase.MLSampleFactory):
         else:
             raise NotImplementedError
 
+
     def _expectation_no_store(self, _cache={}):
         """
         Internal function to return expectation values for the NoStore reference
@@ -203,6 +207,7 @@ class StorageSystem(MLSampleBase.MLSampleFactory):
         if len(_cache) == 0:
             _cache[0] = np.array((8760 * self.rv_system.lolp(), 8760 * self.rv_system.epns()))
         return _cache[0]
+
 
     def _expectation_avg(self, _cache={}):
         """
@@ -228,6 +233,7 @@ class StorageSystem(MLSampleBase.MLSampleFactory):
                                                                   )
             _cache[0] = np.array((8760 * adjusted_rv_system.lolp(), 8760 * adjusted_rv_system.epns()))
         return _cache[0]
+
 
     def _load_flattener_periodic(self, load_vec, power_limit, energy_limit):
         """
@@ -267,8 +273,8 @@ class StorageSystem(MLSampleBase.MLSampleFactory):
 
         return load_vec + power_solution
 
-    def generate_margin_trace(self):
 
+    def generate_margin_trace(self):
         # select a random demand year and its corresponding demand trace
         demand_trace = self.demand_samples[np.random.choice(list(self.demand_samples))]
         # select a random wind trace
@@ -277,6 +283,24 @@ class StorageSystem(MLSampleBase.MLSampleFactory):
         thermal_gen_trace = self.rv_system.generation_trace(num_steps=8760)
         # compute the resulting margin trace
         return thermal_gen_trace + wind_trace - demand_trace
+
+
+    def generate_daily_margin_trace(self):
+        # select a random demand year
+        demand_year = np.random.choice(list(self.demand_samples))
+        # select a random wind year
+        wind_year = np.random.choice(list(self.wind_samples))
+        # select a random date
+        date = np.random.randint(0, 364)
+        # select the corresponding demand trace
+        demand_trace = self.demand_samples[demand_year][date * 24:(date + 1) * 24]
+        # select the corresponding wind trace
+        wind_trace = self.wind_samples[wind_year][date * 24:(date + 1) * 24]
+        # generate a random thermal generation trace
+        thermal_gen_trace = self.rv_system.generation_trace(num_steps=24)
+        # compute the resulting margin trace
+        return thermal_gen_trace + wind_trace - demand_trace
+
 
     def greedy_storage_dispatch(self, pre_margin, power_limit, energy_limit, dt=1):
         """
@@ -302,6 +326,8 @@ class StorageSystem(MLSampleBase.MLSampleFactory):
             post_margin[t] = margin - store_power
 
         return post_margin
+    
+
     def run_greedy_policy(self, margin_trace):
         '''
         Compute (LOL, ENS) for sample in the Gre model
@@ -323,6 +349,7 @@ class StorageSystem(MLSampleBase.MLSampleFactory):
         ue = -np.sum(margin_trace[shortfalls])
         return np.array([lol, ue])
 
+
     def run_greedy_AI(self, margin_trace):
         '''
         Compute (LOL, ENS) for sample in the HGB+Gre model
@@ -337,6 +364,7 @@ class StorageSystem(MLSampleBase.MLSampleFactory):
         margin_trace = margin_trace[lol_estimate>EFFECTIVE_ZERO]
         margin_trace= margin_trace.ravel()
         return self.run_greedy_policy(margin_trace)
+
 
     def run_optimal_policy(self, margin_trace):
         """
@@ -432,6 +460,7 @@ class StorageSystem(MLSampleBase.MLSampleFactory):
             state = state - control_input / power_limits
         return np.array([lol, eu])
     
+
 class StorageSample(MLSampleBase.MLSample):
     """
     Class for a single sample (i.e. realisation) of annual loss of load.
@@ -451,6 +480,7 @@ class StorageSample(MLSampleBase.MLSample):
         self.margin_trace = self.system.generate_margin_trace()
 
         return
+
 
     def generate_value(self, level):
         """
@@ -477,6 +507,7 @@ class StorageSample(MLSampleBase.MLSample):
         else:
             raise RuntimeError()
 
+
     def no_store_generator(self):
         """
         Compute (LOL, ENS) for sample for the NoStore model
@@ -487,6 +518,7 @@ class StorageSample(MLSampleBase.MLSample):
         lol = np.sum(shortfalls)
         ue = -np.sum(self.margin_trace[shortfalls])
         return np.array([lol, ue])
+
 
     def avg_store_generator(self):
         """
@@ -500,6 +532,7 @@ class StorageSample(MLSampleBase.MLSample):
         lol = np.sum(shortfalls)
         ue = -np.sum(adjusted_margin_trace[shortfalls])
         return np.array([lol, ue])
+
 
     def greedy_1_store_generator(self):
         """
@@ -529,6 +562,8 @@ class StorageSample(MLSampleBase.MLSample):
         if (self['NoStore'] < EFFECTIVE_ZERO).all():
             return np.array([0., 0.])
         return self.system.run_greedy_policy(self.margin_trace)
+    
+
     def greedy_AI_generator(self):
         """
         Compute (LOL, ENS) for sample in the GreedyNStore model
@@ -538,7 +573,6 @@ class StorageSample(MLSampleBase.MLSample):
             return np.array([0., 0.])
         return self.system.run_greedy_AI(self.margin_trace)
 
-        
 
     def optimal_n_store_generator(self):
         """
@@ -550,6 +584,7 @@ class StorageSample(MLSampleBase.MLSample):
 
         return self.system.run_optimal_policy(self.margin_trace)
 
+
     def AI_n_store_generator(self):
         """
         Compute (LOL, ENS) for sample in the surrogate model
@@ -557,7 +592,7 @@ class StorageSample(MLSampleBase.MLSample):
         Implemented by Ensieh Sharifnia, TU Delft
         """
         daily_margin_traces = np.reshape(self.margin_trace, (-1,24))
-        daily_margin_traces = daily_margin_traces[~np.all(daily_margin_traces>=0, axis=1),:]
+        
         if (daily_margin_traces.size > 0):
             lol, ens = self.system.AI_model.predict(daily_margin_traces, target=2)
             return np.array([np.sum(lol), np.sum(ens)]) 

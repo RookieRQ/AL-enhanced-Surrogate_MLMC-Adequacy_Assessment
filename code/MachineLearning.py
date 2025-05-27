@@ -32,7 +32,7 @@ class MachineLearning:
                 number of training samples
         """
             
-        self.lol_model, self.scaler, self.ens_model, self.lol_train_time, self.ens_train_time = self.fit(train_size)
+        self.lol_model, self.ens_model, self.lol_train_time, self.ens_train_time = self.fit(train_size)
         
 
     def fit(self, train_size):

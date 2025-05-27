@@ -16,9 +16,7 @@ If you use (parts of) this code, please cite the preprint or published paper.
 """
 import os
 import numpy as np
-from sklearn import svm
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.ensemble import RandomForestRegressor
 
 class MachineLearning:
     """
@@ -26,35 +24,30 @@ class MachineLearning:
 
     """
 
-    def __init__(self, train_size, use_real_lol):
+    def __init__(self, train_size):
         """
         Initialise Machine Learning object
         Parameters:
             train_size : int
-                number of training samples for HistGradientBoostingRegressor
-            use_real_lol : Bool
-                if True, use lol of training data to select samples training for SVR. 
-                Otherwise, use lol prediction of HistGradientBoostingRegressor to select training samples for SVM.
+                number of training samples
         """
             
-        self.lol_model, self.scaler, self.ens_model, self.lol_train_time, self.ens_train_time = self.fit(train_size, use_real_lol)
+        self.lol_model, self.scaler, self.ens_model, self.lol_train_time, self.ens_train_time = self.fit(train_size)
         
-    def fit(self, train_size, use_real_lol):
+
+    def fit(self, train_size):
         '''
         train AI models to predict LOL and ENS
         Parameters:
             train_size : int
-                number of training samples for HistGradientBoostingRegressor
-            use_real_lol : Bool
-                if True, use lol of training data to select samples training for SVM. 
-                Otherwise, use lol prediction of HistGradientBoostingRegressor to select training samples for SVR.
+                number of training samples
         Returns: 
             lol_model: object
-                HistGradientBoostingRegressor model that predicts LOL
+                Random forest model that predicts LOL
             scaler: object
                 scaler object to normalize features for SVR
             ens_model: object
-                SVR model that predicts ENS
+                Random forest model that predicts ENS
             lol_train_time: float
                 training time for LOL estimator
             ens_train_time: float
@@ -62,41 +55,28 @@ class MachineLearning:
         '''
         import time
         start_time = time.time()
-        X_train = self.load_data("../data/AIdata/daily_margin.csv")
-        lol_train = self.load_data("../data/AIdata/lol.csv")
+        X_train = self.load_data("../data/AIdata/daily_margin_test.csv")
+        lol_train = self.load_data("../data/AIdata/lol_test_daily.csv")
+        ens_train = self.load_data("../data/AIdata/ens_test_daily.csv")
+
         if train_size<=1:
             train_size = X_train.shape[0]*train_size
-        lol_index = np.random.choice( X_train.shape[0],train_size, replace=False)
+
+        lol_index = np.random.choice(X_train.shape[0], train_size, replace=False)
         X_train = X_train[lol_index,:]
         lol_train = lol_train[lol_index]
-        if(X_train.shape[0]>2000):
-            min_leaf = 20
-        else:
-            min_leaf = 5
-        lol_model = HistGradientBoostingRegressor(random_state=0, min_samples_leaf=min_leaf).fit(X_train, lol_train)
-        lol_train_time = time.time()-start_time
-        start_time = time.time()
-        if use_real_lol:
-            ens_index = lol_train>0
-        else:
-            y_hat = np.rint(lol_model.predict(X_train))
-            ens_index = y_hat>0
-        X_train[X_train>1] = 1
-        ens_train = self.load_data("../data/AIdata/ens.csv")[lol_index]
-        ens_train = ens_train[ens_index]
-        X_train = X_train[ens_index,:]
-        X_train, scaler = self.scale_data(X_train)
-        ens_model = svm.SVR(cache_size=500, kernel='linear', epsilon=0.1, C=100, degree=2).fit(X_train, ens_train)
-        ens_train_time = time.time()-start_time
-        return lol_model, scaler, ens_model, lol_train_time, ens_train_time
-    def scale_data(self, data):
-        '''
-        normalized data
-        '''
-        scaler = StandardScaler()
-        scaler.fit(data)
-        return scaler.transform(data), scaler
 
+        lol_model = RandomForestRegressor().fit(X_train, lol_train)
+        lol_train_time = time.time()-start_time
+
+        start_time = time.time()
+        ens_train = ens_train[lol_index]
+
+        ens_model = RandomForestRegressor().fit(X_train, ens_train)
+        ens_train_time = time.time()-start_time
+
+        return lol_model, ens_model, lol_train_time, ens_train_time
+    
     
     def load_data(self, file_name):
         '''
@@ -110,6 +90,7 @@ class MachineLearning:
         '''
         data = np.ascontiguousarray(np.genfromtxt(file_name, delimiter=','))
         return data
+
 
     def predict(self, data, target = 2):
         '''
@@ -127,11 +108,10 @@ class MachineLearning:
         '''
         lol = np.rint(self.lol_model.predict(data))
         ens = None
-        if target==2 :            
-            data[data>1] = 1
-            data = self.scaler.transform(data)
+
+        if target==2:
             ens = self.ens_model.predict(data)
-            ens[lol<1] = 0
+
         return lol, ens
 
 
@@ -139,13 +119,13 @@ class MachineLearning:
 
 if __name__ == "__main__":
     
-    from sklearn.metrics import  mean_squared_error
+    from sklearn.metrics import root_mean_squared_error
     st = [500,1000,5000]
     for train_size in st:
-        ML = MachineLearning(train_size= train_size, use_real_lol=True)
+        ML = MachineLearning(train_size=train_size)
         X_test = ML.load_data("../data/AIdata/daily_margin_test.csv")
-        ens_test = ML.load_data("../data/AIdata/ens_test.csv")
-        lol_test = ML.load_data("../data/AIdata/lol_test.csv")
+        ens_test = ML.load_data("../data/AIdata/ens_test_daily.csv")
+        lol_test = ML.load_data("../data/AIdata/lol_test_daily.csv")
         lol_hat, ens_hat = ML.predict(X_test)
-        print(f"root_mean_squared_error(LOL) : {mean_squared_error( lol_test, lol_hat, squared=False):.4f}")
-        print(f"root_mean_squared_error(ENS) : {mean_squared_error( ens_test, ens_hat, squared=False):.4f}")
+        print(f"root_mean_squared_error(LOL) : {root_mean_squared_error(lol_test, lol_hat):.4f}")
+        print(f"root_mean_squared_error(ENS) : {root_mean_squared_error(ens_test, ens_hat):.4f}")

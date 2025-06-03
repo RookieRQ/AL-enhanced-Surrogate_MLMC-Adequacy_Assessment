@@ -134,9 +134,8 @@ class StorageSystem(MLSampleBase.MLSampleFactory):
         daily_storage_demand_offset = mean_daily_demand_with_storage - mean_daily_demand
         self.avg_storage_demand_offset_trace = np.tile(daily_storage_demand_offset, 365)
         # AI model
-        self.AI_model = MachineLearning.MachineLearning(train_size= train_size, use_real_lol=True)
+        self.AI_model = MachineLearning.MachineLearning(train_size= train_size)
 
-        
         return
 
 
